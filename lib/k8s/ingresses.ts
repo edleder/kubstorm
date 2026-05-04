@@ -1,0 +1,62 @@
+import { execSync } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
+import { getKubectlEnv } from './env';
+import * as os from 'os';
+
+export interface IngressInfo {
+  name: string;
+  namespace: string;
+  hosts: string[];
+  ingressIP?: string;
+  createdAt: Date;
+}
+
+export async function listIngresses(
+  kubeconfigString: string,
+  namespace?: string
+): Promise<IngressInfo[]> {
+  try {
+    // Write kubeconfig to temp file
+    const tmpDir = os.tmpdir();
+    const tmpFile = path.join(tmpDir, `kubeconfig-${Date.now()}-${Math.random().toString(36).substring(7)}`);
+    fs.writeFileSync(tmpFile, kubeconfigString, 'utf8');
+
+    try {
+      const nsFlag = namespace ? `-n ${namespace}` : '-A';
+      const output = execSync(
+        `kubectl get ingress ${nsFlag} -o json`,
+        {
+          env: { ...process.env, KUBECONFIG: tmpFile },
+          encoding: 'utf-8',
+          maxBuffer: 10 * 1024 * 1024,
+        }
+      );
+
+      const data = JSON.parse(output);
+      const items = data.items || [];
+
+      return items.map((ingress: any) => {
+        const hosts: string[] = [];
+        ingress.spec?.rules?.forEach((rule: any) => {
+          if (rule.host) hosts.push(rule.host);
+        });
+
+        return {
+          name: ingress.metadata?.name || 'unknown',
+          namespace: ingress.metadata?.namespace || 'default',
+          hosts,
+          ingressIP: ingress.status?.loadBalancer?.ingress?.[0]?.ip ||
+            ingress.status?.loadBalancer?.ingress?.[0]?.hostname,
+          createdAt: new Date(ingress.metadata?.creationTimestamp || 0),
+        };
+      });
+    } finally {
+      fs.unlinkSync(tmpFile);
+    }
+  } catch (error) {
+    throw new Error(
+      `Failed to list ingresses: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
+  }
+}

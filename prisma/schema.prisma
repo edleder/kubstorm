@@ -1,0 +1,56 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id             String           @id @default(cuid())
+  email          String           @unique
+  name           String?
+  password       String
+  role           String           @default("user")
+  ownedClusters  Cluster[]        @relation("ownedClusters")
+  clusterAccess  ClusterAccess[]
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+}
+
+model Cluster {
+  id             String           @id @default(cuid())
+  name           String
+  provider       String           @default("generic")
+  kubeconfigEnc  String?
+  serverUrl      String?
+  saToken        String?
+  gcpProjectId   String?
+  k8sClusterName String?
+  userId         String
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade, name: "ownedClusters")
+  userAccess     ClusterAccess[]
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  lastConnected  DateTime?
+
+  @@index([userId])
+}
+
+model ClusterAccess {
+  id        String   @id @default(cuid())
+  userId    String
+  clusterId String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cluster   Cluster  @relation(fields: [clusterId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, clusterId])
+  @@index([userId])
+  @@index([clusterId])
+}

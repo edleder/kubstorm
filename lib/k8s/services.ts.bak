@@ -1,0 +1,56 @@
+import { execSync } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+
+export interface ServiceInfo {
+  name: string;
+  namespace: string;
+  type: string;
+  clusterIP: string;
+  externalIP?: string;
+  ports: string;
+  createdAt: Date;
+}
+
+export async function listServices(
+  kubeconfigString: string,
+  namespace?: string
+): Promise<ServiceInfo[]> {
+  try {
+    const tmpDir = os.tmpdir();
+    const tmpFile = path.join(tmpDir, `kubeconfig-${Date.now()}-${Math.random().toString(36).substring(7)}`);
+    fs.writeFileSync(tmpFile, kubeconfigString, 'utf8');
+
+    try {
+      const nsFlag = namespace ? `-n ${namespace}` : '-A';
+      const output = execSync(
+        `kubectl get services ${nsFlag} -o json`,
+        {
+          env: { ...process.env, KUBECONFIG: tmpFile },
+          encoding: 'utf-8',
+          maxBuffer: 10 * 1024 * 1024,
+        }
+      );
+
+      const data = JSON.parse(output);
+      const items = data.items || [];
+
+      return items.map((svc: any) => ({
+        name: svc.metadata?.name || 'unknown',
+        namespace: svc.metadata?.namespace || 'default',
+        type: svc.spec?.type || 'unknown',
+        clusterIP: svc.spec?.clusterIP || 'none',
+        externalIP: svc.status?.loadBalancer?.ingress?.[0]?.ip || svc.spec?.externalIPs?.[0],
+        ports: (svc.spec?.ports || []).map((p: any) => `${p.port}${p.targetPort ? '/' + p.targetPort : ''}`).join(', ') || 'none',
+        createdAt: new Date(svc.metadata?.creationTimestamp || 0),
+      }));
+    } finally {
+      fs.unlinkSync(tmpFile);
+    }
+  } catch (error) {
+    throw new Error(
+      `Failed to list services: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
+  }
+}

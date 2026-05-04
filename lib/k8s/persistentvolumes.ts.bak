@@ -1,0 +1,106 @@
+import { execSync } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+
+export interface PersistentVolumeInfo {
+  name: string;
+  capacity: string;
+  accessMode: string;
+  reclaimPolicy: string;
+  status: string;
+  claimRef?: string;
+  createdAt: Date;
+}
+
+export interface PersistentVolumeClaimInfo {
+  name: string;
+  namespace: string;
+  status: string;
+  volume?: string;
+  capacity: string;
+  accessMode: string;
+  createdAt: Date;
+}
+
+export async function listPersistentVolumes(
+  kubeconfigString: string
+): Promise<PersistentVolumeInfo[]> {
+  try {
+    const tmpDir = os.tmpdir();
+    const tmpFile = path.join(tmpDir, `kubeconfig-${Date.now()}-${Math.random().toString(36).substring(7)}`);
+    fs.writeFileSync(tmpFile, kubeconfigString, 'utf8');
+
+    try {
+      const output = execSync(
+        `kubectl get pv -o json`,
+        {
+          env: { ...process.env, KUBECONFIG: tmpFile },
+          encoding: 'utf-8',
+          maxBuffer: 10 * 1024 * 1024,
+        }
+      );
+
+      const data = JSON.parse(output);
+      const items = data.items || [];
+
+      return items.map((pv: any) => ({
+        name: pv.metadata?.name || 'unknown',
+        capacity: pv.spec?.capacity?.storage || 'unknown',
+        accessMode: (pv.spec?.accessModes || []).join(', ') || 'unknown',
+        reclaimPolicy: pv.spec?.persistentVolumeReclaimPolicy || 'unknown',
+        status: pv.status?.phase || 'unknown',
+        claimRef: pv.spec?.claimRef ? `${pv.spec.claimRef.namespace}/${pv.spec.claimRef.name}` : undefined,
+        createdAt: new Date(pv.metadata?.creationTimestamp || 0),
+      }));
+    } finally {
+      fs.unlinkSync(tmpFile);
+    }
+  } catch (error) {
+    throw new Error(
+      `Failed to list persistent volumes: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
+  }
+}
+
+export async function listPersistentVolumeClaims(
+  kubeconfigString: string,
+  namespace?: string
+): Promise<PersistentVolumeClaimInfo[]> {
+  try {
+    const tmpDir = os.tmpdir();
+    const tmpFile = path.join(tmpDir, `kubeconfig-${Date.now()}-${Math.random().toString(36).substring(7)}`);
+    fs.writeFileSync(tmpFile, kubeconfigString, 'utf8');
+
+    try {
+      const nsFlag = namespace ? `-n ${namespace}` : '-A';
+      const output = execSync(
+        `kubectl get pvc ${nsFlag} -o json`,
+        {
+          env: { ...process.env, KUBECONFIG: tmpFile },
+          encoding: 'utf-8',
+          maxBuffer: 10 * 1024 * 1024,
+        }
+      );
+
+      const data = JSON.parse(output);
+      const items = data.items || [];
+
+      return items.map((pvc: any) => ({
+        name: pvc.metadata?.name || 'unknown',
+        namespace: pvc.metadata?.namespace || 'default',
+        status: pvc.status?.phase || 'unknown',
+        volume: pvc.spec?.volumeName,
+        capacity: pvc.status?.capacity?.storage || 'unknown',
+        accessMode: (pvc.spec?.accessModes || []).join(', ') || 'unknown',
+        createdAt: new Date(pvc.metadata?.creationTimestamp || 0),
+      }));
+    } finally {
+      fs.unlinkSync(tmpFile);
+    }
+  } catch (error) {
+    throw new Error(
+      `Failed to list persistent volume claims: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
+  }
+}

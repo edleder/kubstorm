@@ -1,0 +1,59 @@
+import { execSync } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
+import { getKubectlEnv } from './env';
+import * as os from 'os';
+
+export interface DeploymentInfo {
+  name: string;
+  namespace: string;
+  replicas: number;
+  ready: number;
+  updated: number;
+  available: number;
+  createdAt: Date;
+  image?: string;
+}
+
+export async function listDeployments(
+  kubeconfigString: string,
+  namespace?: string
+): Promise<DeploymentInfo[]> {
+  try {
+    const tmpDir = os.tmpdir();
+    const tmpFile = path.join(tmpDir, `kubeconfig-${Date.now()}-${Math.random().toString(36).substring(7)}`);
+    fs.writeFileSync(tmpFile, kubeconfigString, 'utf8');
+
+    try {
+      const nsFlag = namespace ? `-n ${namespace}` : '-A';
+      const output = execSync(
+        `kubectl get deployments ${nsFlag} -o json`,
+        {
+          env: { ...process.env, KUBECONFIG: tmpFile },
+          encoding: 'utf-8',
+          maxBuffer: 10 * 1024 * 1024,
+        }
+      );
+
+      const data = JSON.parse(output);
+      const items = data.items || [];
+
+      return items.map((dep: any) => ({
+        name: dep.metadata?.name || 'unknown',
+        namespace: dep.metadata?.namespace || 'default',
+        replicas: dep.spec?.replicas || 0,
+        ready: dep.status?.readyReplicas || 0,
+        updated: dep.status?.updatedReplicas || 0,
+        available: dep.status?.availableReplicas || 0,
+        createdAt: new Date(dep.metadata?.creationTimestamp || 0),
+        image: dep.spec?.template?.spec?.containers?.[0]?.image || 'unknown',
+      }));
+    } finally {
+      fs.unlinkSync(tmpFile);
+    }
+  } catch (error) {
+    throw new Error(
+      `Failed to list deployments: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
+  }
+}
